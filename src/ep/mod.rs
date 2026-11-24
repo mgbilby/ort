@@ -65,7 +65,13 @@ pub trait ExecutionProvider: Send + Sync {
 pub trait ArbitrarilyConfigurableExecutionProvider: Sized {
 	fn options_mut(&mut self) -> &mut ExecutionProviderOptions;
 
-	fn with_arbitrary_config(mut self, key: impl ToString, value: impl ToString) -> Self {
+	/// Sets the option `key` to `value`.
+	///
+	/// # Safety
+	/// Usage of this function is usually safe, but some EPs have options whose value is the address of something to be
+	/// used by ONNX Runtime (e.g. a compute stream or device context). In those cases, you must ensure the object being
+	/// pointed to outlives the environment/session configured to use this execution provider.
+	unsafe fn with_arbitrary_config(mut self, key: impl ToString, value: impl ToString) -> Self {
 		self.options_mut().set(key.to_string(), value.to_string());
 		self
 	}
@@ -99,6 +105,7 @@ impl<E: SimpleExecutionProvider> ExecutionProvider for E {
 struct ExecutionProviderVTable {
 	name: &'static str,
 	register: fn(*const (), session_builder: &mut SessionBuilder) -> Result<()>,
+	clone: fn(*const ()),
 	drop: fn(*mut ())
 }
 
@@ -115,7 +122,7 @@ pub struct ExecutionProviderDispatch {
 
 impl Clone for ExecutionProviderDispatch {
 	fn clone(&self) -> Self {
-		unsafe { Arc::increment_strong_count(self.ep) };
+		(self.vtable.clone)(self.ep);
 
 		ExecutionProviderDispatch {
 			ep: self.ep,
@@ -136,7 +143,9 @@ impl ExecutionProviderDispatch {
 			let ep = unsafe { &*ep.cast::<E>() };
 			ep.register(session_builder)
 		}
-
+		fn clone<E: ExecutionProvider>(ep: *const ()) {
+			unsafe { Arc::increment_strong_count(ep.cast::<E>()) };
+		}
 		fn ep_drop<E: ExecutionProvider>(ep: *mut ()) {
 			let _ = unsafe { Arc::from_raw(ep.cast::<E>()) };
 		}
@@ -146,6 +155,7 @@ impl ExecutionProviderDispatch {
 			vtable: &ExecutionProviderVTable {
 				name: E::NAME,
 				register: register::<E>,
+				clone: clone::<E>,
 				drop: ep_drop::<E>
 			},
 			error_on_failure: false
@@ -207,7 +217,7 @@ impl fmt::Display for ArenaExtendStrategy {
 pub struct ExecutionProviderOptions(MiniMap<CString, CString>);
 
 impl ExecutionProviderOptions {
-	pub fn set(&mut self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
+	pub(crate) fn set(&mut self, key: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) {
 		self.0
 			.insert(CString::new(key).expect("unexpected nul in key string"), CString::new(value).expect("unexpected nul in value string"));
 	}
@@ -248,7 +258,7 @@ macro_rules! define_ep_register {
 		let $symbol = unsafe {
 			let dylib = $crate::load_dynamic::G_ORT_LIB.get().expect("dylib not yet initialized");
 			let symbol: ::core::result::Result<
-				::libloading::Symbol<unsafe extern "C" fn($($id: $type),*) -> $rt>,
+				::libloading::Symbol<unsafe extern "system" fn($($id: $type),*) -> $rt>,
 				::libloading::Error
 			> = dylib.get(stringify!($symbol).as_bytes());
 			match symbol {
@@ -259,7 +269,7 @@ macro_rules! define_ep_register {
 			}
 		};
 		#[cfg(not(all(feature = "load-dynamic", not(all(target_family = "wasm", target_os = "unknown")))))]
-		unsafe extern "C" {
+		unsafe extern "system" {
 			fn $symbol($($id: $type),*) -> $rt;
 		}
 	};
@@ -385,7 +395,7 @@ pub trait ExecutionProviderResource {
 	fn id(&self) -> u32;
 
 	#[doc(hidden)]
-	fn convert(value: *const core::ffi::c_void) -> Self::Type;
+	unsafe fn convert(value: *const core::ffi::c_void) -> Self::Type;
 }
 
 pub mod cpu;

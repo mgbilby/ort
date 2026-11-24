@@ -5,7 +5,7 @@ use ort::{
 
 #[test]
 fn test_tensors() -> ort::Result<()> {
-	ort::set_api(ort_candle::api());
+	unsafe { ort::set_api(ort_candle::api()) };
 
 	let mut tensor = Tensor::<i64>::from_array((vec![5], vec![0, 1, 2, 3, 4]))?;
 	let ptr = tensor.data_ptr_mut().cast::<i64>();
@@ -21,7 +21,7 @@ fn test_tensors() -> ort::Result<()> {
 
 #[test]
 fn test_allocated_tensor() -> ort::Result<()> {
-	ort::set_api(ort_candle::api());
+	unsafe { ort::set_api(ort_candle::api()) };
 
 	let mut tensor = Tensor::<f32>::new(&Allocator::default(), [2_usize, 3])?;
 	assert_eq!(**tensor.shape(), [2, 3]);
@@ -51,7 +51,7 @@ fn test_allocated_tensor() -> ort::Result<()> {
 
 #[test]
 fn test_borrowed_tensor_aliases_data() -> ort::Result<()> {
-	ort::set_api(ort_candle::api());
+	unsafe { ort::set_api(ort_candle::api()) };
 
 	let mut data = vec![0.0_f32; 4];
 	{
@@ -65,10 +65,18 @@ fn test_borrowed_tensor_aliases_data() -> ort::Result<()> {
 
 #[test]
 fn test_unsupported_types() -> ort::Result<()> {
-	ort::set_api(ort_candle::api());
+	unsafe { ort::set_api(ort_candle::api()) };
 
 	assert!(DynTensor::new(&Allocator::default(), TensorElementType::String, [4_usize]).is_err());
 	assert!(DynTensor::new(&Allocator::default(), TensorElementType::Int8, [4_usize]).is_err());
 
 	Ok(())
+}
+
+#[test]
+fn test_comically_large_tensor() {
+	unsafe { ort::set_api(ort_candle::api()) };
+
+	assert!(Tensor::<f32>::new(&Allocator::default(), [1_i64 << 62]).is_err());
+	assert!(Tensor::<i64>::new(&Allocator::default(), [1_i64 << 31, 1_i64 << 30]).is_err());
 }

@@ -93,10 +93,6 @@ impl Environment {
 		CURRENT_ENV.get().and_then(Weak::upgrade).map(Environment)
 	}
 
-	pub(crate) fn weak(&self) -> Weak<EnvironmentInner> {
-		Arc::downgrade(&self.0)
-	}
-
 	/// Sets the global log level.
 	///
 	/// ```
@@ -345,7 +341,7 @@ impl Drop for GlobalThreadPoolOptions {
 /// [session]: crate::session::builder::SessionBuilder::with_thread_manager
 pub trait ThreadManager: Send + Sync {
 	/// A handle to a spawned thread; used to [`join`](ThreadManager::join) it later.
-	type Thread;
+	type Thread: Send;
 
 	/// Spawns a thread.
 	///

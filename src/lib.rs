@@ -136,7 +136,7 @@ pub(crate) mod load_dynamic {
 	}
 
 	pub(crate) fn version_string(lib: &libloading::Library, path: &std::path::Path) -> Result<&'static str, LoadError> {
-		let base_getter: libloading::Symbol<unsafe extern "C" fn() -> *const ort_sys::OrtApiBase> =
+		let base_getter: libloading::Symbol<unsafe extern "system" fn() -> *const ort_sys::OrtApiBase> =
 			unsafe { lib.get(b"OrtGetApiBase") }.map_err(|_| LoadError::MissingApi { path: path.to_path_buf() })?;
 		let base: *const ort_sys::OrtApiBase = unsafe { base_getter() };
 		assert!(!base.is_null());
@@ -237,7 +237,7 @@ fn setup_api() -> ApiPointer {
 			load_dynamic::init(&path).unwrap_or_else(|e| panic!("Failed to load ONNX Runtime dylib: {e}"));
 			G_ORT_LIB.get_unchecked()
 		};
-		let base_getter: libloading::Symbol<unsafe extern "C" fn() -> *const ort_sys::OrtApiBase> = dylib
+		let base_getter: libloading::Symbol<unsafe extern "system" fn() -> *const ort_sys::OrtApiBase> = dylib
 			.get(b"OrtGetApiBase")
 			.expect("`OrtGetApiBase` must be present in ONNX Runtime dylib");
 		base_getter()
@@ -260,9 +260,15 @@ fn setup_api() -> ApiPointer {
 ///
 /// ```no_run
 /// # use ort_sys::stub as ort_tract;
-/// ort::set_api(ort_tract::api());
+/// unsafe { ort::set_api(ort_tract::api()) };
 /// ```
-pub fn set_api(api: ort_sys::OrtApi) -> bool {
+///
+/// # Safety
+/// `ort` trusts the given API completely; it is assumed that every function in `api` behaves exactly the same way the
+/// corresponding ONNX Runtime implementation does (memory safety-wise). The APIs provided by official alternative
+/// backends (`ort-tract`, `ort-candle`, `ort-web`) do, but a flawed third-party backend can seriously mess up your
+/// program!
+pub unsafe fn set_api(api: ort_sys::OrtApi) -> bool {
 	G_ORT_API.try_insert_with(|| ApiPointer(unsafe { NonNull::new_unchecked(Box::leak(Box::new(api))) }))
 }
 
